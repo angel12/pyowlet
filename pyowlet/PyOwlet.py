@@ -7,18 +7,23 @@ import requests
 logging.basicConfig(filename='pyowlet.log', level=logging.DEBUG)
 
 
-class PyOwlet:
+class PyOwlet(object):
 
-    def __init__(self, username, password):
+    def __init__(self, username, password, prop_ttl=15):
         self.auth_token = None
         self.expire_time = 0
+        self.prop_expire_time = 0
+        self.prop_ttl = prop_ttl
         self.username = username
         self.password = password
         self.headers = None
         self.auth_header = None
+        self.monitored_properties = []
 
         self.auth_token = self.login(username, password)
         self.dsn = self.get_dsn()
+
+        self.update_properties()
 
     def get_auth_header(self):
         '''
@@ -47,15 +52,46 @@ class PyOwlet:
         # dsn = json_data[0]['device']['dsn']
         return json_data[0]['device']['dsn']
 
-    def get_property(self, measure):
+    def get_properties(self, measure=None):
 
         properties_url = 'https://ads-field.aylanetworks.com/apiv1/dsns/{}/properties'.format(
             self.dsn)
 
-        measure_url = properties_url + '/' + measure
-        response = requests.get(measure_url, headers=self.get_auth_header())
-        data = response.json()['property']
+        if measure is not None:
+            properties_url = properties_url + '/' + measure
+
+        response = requests.get(properties_url, headers=self.get_auth_header())
+        data = response.json()
+
+        if measure is not None:
+            return data['property']
+
         return data
+
+    def update_properties(self):
+
+        data = self.get_properties()
+
+        for value in data:
+            name = value['property']['name'].lower()
+            val = value['property']['value']
+
+            if name not in self.monitored_properties:
+                self.monitored_properties.append(name)
+
+            self.__setattr__(name, val)
+
+        self.prop_expire_time = time.time() + self.prop_ttl
+
+    def __getattribute__(self, attr):
+
+        monitored = object.__getattribute__(self, 'monitored_properties')
+        prop_exp = object.__getattribute__(self, 'prop_expire_time')
+
+        if attr in monitored and prop_exp <= time.time():
+            self.update_properties()
+
+        return object.__getattribute__(self, attr)
 
     def login(self, email, password):
         """Logs in to the Owlet API service to get access token.
